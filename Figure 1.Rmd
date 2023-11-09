@@ -1,0 +1,360 @@
+---
+title: "Figure 1"
+author: "Can Ulutekin"
+date: "26/09/2022"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+### Cleanup
+
+```{r}
+rm(list = ls())
+```
+
+### Packages
+
+```{r}
+library(tidyverse)
+library(openxlsx)
+library(ComplexHeatmap)
+library(rstatix)
+library(ggpubr)
+```
+
+### Load Data
+
+```{r, warning=FALSE}
+setwd("../../paper_data/discovery_cohort/")
+data <- readRDS("data_disc_surf.rds")
+md <- read.xlsx("metadata.xlsx")
+
+all_markers <- colnames(data)[3:38]
+```
+
+### Figure 1.A
+
+```{r, warning=FALSE}
+set.seed(120)
+data_sub <- data %>%
+  dplyr::select(-c(UMAP1, UMAP2)) %>%
+  dplyr::group_by(patient_timepoint) %>%
+  dplyr::sample_n(1500) %>% # 52500 cells total
+  dplyr::ungroup() %>%
+  dplyr::arrange(cell_id) %>%
+  dplyr::mutate(main_clusters = factor(main_clusters,
+                                       levels = c("B", "CD4", "CD8", "TReg",
+                                                  "gdT", "NK", "Myeloid",
+                                                  "Unknown")))
+
+umap_output <- umap(data_sub[, all_markers], random_state = 120, verbose = FALSE)
+umap_coord <- as.data.frame(umap_output$layout)
+colnames(umap_coord) <- c("UMAP2", "UMAP1")
+
+data_umap <- cbind(data_sub, umap_coord)
+
+cp_umap <- c("#8cc09c", "#f0ba64", "#acddfe", "#f0ef70", "#fccfca",
+             "#e663ff", "#f37159", "#8c9093")
+
+fig1.A <- ggplot(data_umap, aes(x = UMAP1, y = UMAP2, col = main_clusters)) +
+  geom_point(size = 0.2, alpha = 0.2) +
+  theme_classic() +
+  scale_color_manual(values = cp_umap) +
+  coord_fixed(ratio = 1) +
+  guides(colour = guide_legend(override.aes = list(size = 3)))
+
+fig1.A
+
+setwd("../figures")
+pdf(file = "Figure_1A.pdf")
+print(fig1.A)
+invisible(dev.off())
+
+rm(data_sub, data_umap, umap_coord, umap_output, cp_umap) # cleanup
+```
+
+### Figure 1.B
+
+```{r, warning=FALSE}
+white.black <- colorRampPalette(c("white", "black"))(n = 9)
+
+data_heatmap <- data %>%
+  dplyr::group_by(main_clusters) %>%
+  dplyr::summarise(across(all_of(all_markers), median)) %>%
+  dplyr::ungroup() %>%
+  tibble::column_to_rownames("main_clusters") %>%
+  as.matrix()
+
+fig1.B <- Heatmap(data_heatmap,
+                  col = white.black,
+                  show_column_dend = FALSE,
+                  show_row_dend = FALSE,
+                  cluster_columns = FALSE,
+                  row_order = c("B", "CD4", "CD8", "TReg", "gdT",
+                                "NK", "Myeloid", "Unknown"),
+                  row_names_gp = gpar(fontsize = 20),
+                  column_names_gp = gpar(fontsize = 16),
+                  name = "Expr")
+
+fig1.B
+
+setwd("../figures")
+pdf(file = "Figure_1B.pdf", width = 24)
+print(fig1.B)
+invisible(dev.off())
+
+rm(data_heatmap, white.black) # cleanup
+```
+
+### Figure 1.C
+
+```{r, warning=FALSE}
+white.black <- colorRampPalette(c("white", "black"))(n = 9)
+
+B_clust_markers <- c("CD19", "CD20", "CD27", "CD38", "IgD", "IgM")
+
+data_heatmap <- data %>%
+  dplyr::filter(main_clusters == "B") %>%
+  dplyr::group_by(sub_clusters) %>%
+  dplyr::summarise(across(all_of(B_clust_markers), median)) %>%
+  dplyr::ungroup() %>%
+  tibble::column_to_rownames("sub_clusters") %>%
+  as.matrix()
+
+fig1.C <- Heatmap(data_heatmap,
+                  col = white.black,
+                  show_column_dend = FALSE,
+                  show_row_dend = FALSE,
+                  cluster_columns = FALSE,
+                  row_order = c("Memory", "Naive", "MZ-like", "Plasmablasts"),
+                  row_names_gp = gpar(fontsize = 20),
+                  column_names_gp = gpar(fontsize = 16),
+                  name = "Expr")
+
+fig1.C
+
+setwd("../figures")
+pdf(file = "Figure_1C.pdf", width = 10)
+print(fig1.C)
+invisible(dev.off())
+
+rm(data_heatmap, white.black, B_clust_markers) # cleanup
+```
+
+### Figure 1.D
+
+```{r, warning=FALSE}
+data_graph <- data %>%
+  dplyr::group_by(patient_timepoint) %>%
+  dplyr::add_tally(name = "total_count") %>%
+  dplyr::ungroup() %>%
+  dplyr::filter(main_clusters == "B") %>%
+  dplyr::group_by(patient_timepoint, sub_clusters) %>%
+  dplyr::add_tally(name = "sub_count") %>%
+  dplyr::ungroup() %>%
+  dplyr::select(patient_timepoint, sub_clusters, total_count, sub_count) %>%
+  dplyr::distinct()
+
+missing_rows <- setdiff(
+  cross2(unique(data_graph$patient_timepoint),
+         unique(data_graph$sub_clusters)) %>% 
+    map_chr(paste, collapse = "-"),
+  data_graph %>%
+    dplyr::mutate(x = paste(patient_timepoint, sub_clusters, sep = "-")) %>%
+    .$x
+)
+
+data_missing_rows <- str_split(missing_rows, "-", n = 2, simplify = TRUE) %>%
+  as.data.frame() %>%
+  dplyr::rename(patient_timepoint = V1) %>%
+  dplyr::rename(sub_clusters = V2) %>%
+  dplyr::mutate(total_count = NA_real_) %>%
+  dplyr::mutate(sub_count = 0)
+
+data_missing_rows$total_count <- sapply(
+  data_missing_rows$patient_timepoint,
+  function(x){
+    data_graph %>%
+      dplyr::filter(patient_timepoint == x) %>%
+      dplyr::select(total_count) %>%
+      dplyr::distinct() %>%
+      .$total_count
+  }
+)
+
+data_graph <- data_graph %>%
+  dplyr::bind_rows(data_missing_rows) %>%
+  tidyr::separate(patient_timepoint, c("patient", "timepoint"),
+                  sep = "_", remove = FALSE) %>%
+  dplyr::mutate(patient = as.numeric(patient)) %>%
+  dplyr::mutate(timepoint = as.numeric(timepoint)) %>%
+  dplyr::arrange(patient, timepoint, sub_clusters) %>%
+  dplyr::select(-c(patient, timepoint)) %>%
+  dplyr::mutate(frequency = 100 * sub_count / total_count) %>%
+  dplyr::full_join(md, by = "patient_timepoint") %>%
+  dplyr::mutate(sub_clusters = factor(sub_clusters,
+                                      levels = c("Memory", "Naive",
+                                                 "MZ-like", "Plasmablasts")))
+
+fig1.D <- ggplot(data_graph %>%
+                   dplyr::mutate(days_last_treatment = if_else(is.na(days_last_treatment), 0, days_last_treatment, NA_real_)),
+                 aes(x = days_last_treatment, y = frequency)) +
+  geom_smooth(se = FALSE, method = "loess", formula = "y~x", span = 0.4, col = "#606266", size = 0.5) +
+  geom_point() +
+  facet_wrap(~sub_clusters, scales = "free", nrow = 1) +
+  scale_x_continuous(breaks = seq(0, 315, 35), labels = seq(0, 315, 35) / 7) +
+  ylab("% of total leukocytes") +
+  xlab("weeks after last infusion") +
+  theme_classic() +
+  theme(panel.grid.major.x = element_line(),
+        legend.position = "none")
+
+fig1.D
+
+setwd("../figures")
+pdf(file = "Figure_1D.pdf", width = 12, height = 3)
+print(fig1.D)
+invisible(dev.off())
+
+rm(data_graph, missing_rows, data_missing_rows, data_graph_supp) # cleanup
+```
+
+### Figure 1.E
+
+```{r, warning=FALSE}
+data_pie <- data %>%
+  dplyr::group_by(patient_timepoint) %>%
+  dplyr::add_tally(name = "total_count") %>%
+  dplyr::ungroup() %>%
+  dplyr::filter(main_clusters == "B") %>%
+  dplyr::group_by(patient_timepoint) %>%
+  dplyr::add_tally(name = "B_count") %>%
+  dplyr::ungroup() %>%
+  dplyr::group_by(patient_timepoint, sub_clusters) %>%
+  dplyr::add_tally(name = "Bsub_count") %>%
+  dplyr::ungroup() %>%
+  dplyr::select(patient_timepoint, sub_clusters, Bsub_count, B_count, total_count) %>%
+  dplyr::distinct() %>%
+  dplyr::mutate(B_freq = B_count / total_count) %>%
+  dplyr::mutate(Bsub_comp = 100 * Bsub_count / B_count) %>%
+  dplyr::full_join(md, by = "patient_timepoint") %>%
+  dplyr::mutate(treated = if_else(treatment_cycle == 0,
+                                  "Before", "After",
+                                  NA_character_)) %>%
+  dplyr::group_by(patient_id, treated) %>%
+  dplyr::filter(B_freq == max(B_freq)) %>%
+  dplyr::ungroup() %>%
+  dplyr::mutate(filter = if_else(B_count >= 100,
+                                 NA_real_, patient_id, NA_real_)) %>%
+  dplyr::filter(!patient_id %in% filter) %>%
+  dplyr::group_by(sub_clusters, treated) %>%
+  dplyr::summarise(Bsub_comp = mean(Bsub_comp), .groups = "drop_last") %>%
+  dplyr::ungroup() %>%
+  dplyr::mutate(sub_clusters = factor(sub_clusters,
+                                      levels = c("Memory", "Naive", "MZ-like",
+                                                 "Plasmablasts")))
+
+cp <- c("#8cc09d", "#f0ba64", "#acddff", "#f0ef70")
+
+p_before <- ggplot(data_pie %>%
+         dplyr::filter(treated == "Before"),
+       aes(x = treated, y = Bsub_comp, fill = sub_clusters)) +
+  geom_col(col = "black") +
+  ggtitle("Before Treatment") +
+  coord_polar("y", start = 0) +
+  scale_fill_manual(values = cp) +
+  theme_classic() +
+  theme(axis.text = element_blank(),
+        axis.title = element_blank(),
+        axis.line = element_blank(),
+        axis.ticks = element_blank(),
+        plot.title = element_text(hjust = 0.5))
+
+p_after <- ggplot(data_pie %>%
+         dplyr::filter(treated == "After"),
+       aes(x = treated, y = Bsub_comp, fill = sub_clusters)) +
+  geom_col(col = "black") +
+  ggtitle("After Treatment") +
+  coord_polar("y", start = 0) +
+  scale_fill_manual(values = cp) +
+  theme_classic() +
+  theme(axis.text = element_blank(),
+        axis.title = element_blank(),
+        axis.line = element_blank(),
+        axis.ticks = element_blank(),
+        plot.title = element_text(hjust = 0.5))
+
+fig1.E <- ggarrange(p_before, p_after)
+
+fig1.E
+
+setwd("../figures")
+pdf(file = "Figure_1E.pdf", width = 14)
+print(fig1.E)
+invisible(dev.off())
+
+rm(data_pie, cp, p_before, p_after) # cleanup
+```
+
+### Figure 1.F
+
+```{r, warning=FALSE}
+data_violin <- data %>%
+  dplyr::group_by(patient_timepoint) %>%
+  dplyr::add_tally(name = "total_count") %>%
+  dplyr::ungroup() %>%
+  dplyr::filter(main_clusters == "B") %>%
+  dplyr::group_by(patient_timepoint) %>%
+  dplyr::add_tally(name = "B_count") %>%
+  dplyr::ungroup() %>%
+  dplyr::group_by(patient_timepoint, sub_clusters) %>%
+  dplyr::add_tally(name = "Bsub_count") %>%
+  dplyr::ungroup() %>%
+  dplyr::select(patient_timepoint, sub_clusters, Bsub_count, B_count, total_count) %>%
+  dplyr::distinct() %>%
+  dplyr::mutate(B_freq = B_count / total_count) %>%
+  dplyr::mutate(Bsub_comp = 100 * Bsub_count / B_count) %>%
+  dplyr::full_join(md, by = "patient_timepoint") %>%
+  dplyr::mutate(treated = if_else(treatment_cycle == 0,
+                                  "Before", "After",
+                                  NA_character_)) %>%
+  dplyr::group_by(patient_id, treated) %>%
+  dplyr::filter(B_freq == max(B_freq)) %>%
+  dplyr::ungroup() %>%
+  dplyr::mutate(filter = if_else(B_count >= 100,
+                                 NA_real_, patient_id, NA_real_)) %>%
+  dplyr::filter(!patient_id %in% filter) %>%
+  dplyr::select(-filter) %>%
+  dplyr::mutate(treated = factor(treated, levels = c("Before", "After"))) %>%
+  dplyr::mutate(sub_clusters = factor(sub_clusters,
+                                      levels = c("Memory", "Naive", "MZ-like",
+                                                 "Plasmablasts")))
+
+fig1.F <- ggplot(data_violin, aes(x = treated, y = Bsub_comp, fill = treated)) +
+  
+  ### The values shown by stat_compare_means are not multiple hypothesis corrected
+  ### Use the function p.adjust with Benjamini-Hochberg to replicate p-values from the study
+  # stat_compare_means(comparisons = list(c("Before", "After")), paired = T) +
+  geom_violin(scale ="area", alpha = 1, draw_quantiles = .5) +
+  geom_point(size = 0.5) +
+  geom_line(aes(group = patient_id), colour="black", linetype="11") +
+  facet_wrap(~sub_clusters, scales = "free", nrow = 1) +
+  scale_fill_manual(values = c("#abc3c9", "#e0dcd3")) +
+  ylab("% of B cells") +
+  xlab("treatment") +
+  theme_classic() +
+  theme(legend.position = "none",
+        strip.text.x = element_text(size = 7))
+
+fig1.F
+
+setwd("../figures")
+pdf(file = "Figure_1F.pdf", width = 14, height = 5)
+print(fig1.F)
+invisible(dev.off())
+
+rm(data_violin) # cleanup
+```

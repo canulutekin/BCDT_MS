@@ -1,0 +1,137 @@
+---
+title: "Figure S2"
+author: "Can Ulutekin"
+date: "07/10/2022"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+### Cleanup
+
+```{r}
+rm(list = ls())
+```
+
+### Packages
+
+```{r}
+library(tidyverse)
+library(openxlsx)
+library(ggpubr)
+library(umap)
+```
+
+### Load Data
+
+```{r, warning=FALSE}
+setwd("../../paper_data/discovery_cohort/")
+data_cyto <- readRDS("data_disc_cyto.rds")
+data_surf <- readRDS("data_disc_surf.rds")
+md <- read.xlsx("metadata.xlsx")
+
+all_markers_cyto <- colnames(data_cyto)[3:38]
+all_markers_surf <- colnames(data_surf)[3:38]
+```
+
+### Figure S1.A
+
+```{r warning=FALSE}
+umap_markers <- c("CD20", "CD27", "CD38", "IgD", "IgM")
+
+set.seed(120)
+data_umap <- data_surf %>%
+  dplyr::filter(main_clusters == "B") %>%
+  dplyr::select(-c(UMAP1, UMAP2)) %>%
+  dplyr::filter(sub_clusters %in% c("Memory", "Naive", "MZ-like", "Plasmablasts")) %>%
+  dplyr::sample_n(50000) %>%
+  dplyr::arrange(cell_id) %>%
+  dplyr::mutate(sub_clusters = factor(sub_clusters,
+                                      levels = c("Memory",
+                                                 "Naive",
+                                                 "MZ-like",
+                                                 "Plasmablasts")))
+
+umap <- umap(data_umap[, umap_markers],
+             random_state = 120, verbose = FALSE)
+umap <- as.data.frame(umap$layout)
+colnames(umap) <- c("UMAP1", "UMAP2")
+
+data_umap <- dplyr::bind_cols(data_umap, umap)
+
+cp_umap <- c("#8cc09c", "#f0ba64", "#acddfe", "#f0ef70")
+
+figS1.A <- ggplot(data = data_umap,
+                  aes(x = UMAP1, y = UMAP2, col = sub_clusters)) +
+  geom_point(size = 0.2, alpha = 0.3) +
+  theme_classic() +
+  scale_color_manual(values = cp_umap) +
+  coord_fixed(ratio = 1) +
+  guides(colour = guide_legend(override.aes = list(size = 3)))
+
+figS1.A
+
+setwd("../figures")
+pdf(file = "Figure_S1A.pdf")
+print(figS1.A)
+invisible(dev.off())
+
+rm(data_umap, umap, cp_umap, umap_markers) # cleanup
+```
+
+### Figure S1.B
+
+```{r, warning=FALSE}
+viable_patients <- c("1_0","1_1","2_0","2_2","3_0","3_1","4_0","4_1",
+                     "5_0","5_1","6_0","6_1","7_0","7_1","8_0","8_1",
+                     "9_0","9_1","10_0","10_1","11_0","11_1","12_0","12_1")
+
+data_violin <- data_surf %>%
+  dplyr::filter(patient_timepoint %in% viable_patients) %>%
+  dplyr::filter(!main_clusters %in% c("B", "Unknown")) %>%
+  dplyr::group_by(patient_timepoint) %>%
+  dplyr::add_tally(name = "total_count") %>%
+  dplyr::ungroup() %>%
+  dplyr::group_by(patient_timepoint, main_clusters) %>%
+  dplyr::add_tally(name = "cluster_count") %>%
+  dplyr::ungroup() %>%
+  dplyr::select(patient_timepoint, main_clusters, cluster_count, total_count) %>%
+  dplyr::distinct() %>%
+  dplyr::mutate(freq = 100 * cluster_count / total_count) %>%
+  dplyr::left_join(md, by = "patient_timepoint") %>%
+  dplyr::mutate(treated = if_else(treatment_cycle == 0,
+                                  "Before", "After",
+                                  NA_character_)) %>%
+  dplyr::mutate(main_clusters = factor(main_clusters,
+                                       levels = c("CD4", "CD8", "TReg", "gdT",
+                                                  "NK", "Myeloid"))) %>%
+  dplyr::mutate(treated = factor(treated, levels = c("Before", "After"))) %>%
+  dplyr::arrange(main_clusters, patient_id, treated)
+
+figS1.B <- ggplot(data_violin, aes(x = treated, y = freq, fill = treated)) +
+  
+  ### The values shown by stat_compare_means are not multiple hypothesis corrected
+  ### Use the function p.adjust with Benjamini-Hochberg to replicate p-values from the study
+  # stat_compare_means(comparisons = list(c("Before", "After")), paired = T) +
+  geom_violin(scale ="area", alpha = 1, draw_quantiles = .5) +
+  geom_point(size = 0.5) +
+  geom_line(aes(group = patient_id), colour="black", linetype="11") +
+  facet_wrap(~main_clusters, scales = "free", nrow = 1) +
+  scale_fill_manual(values = c("#abc3c9", "#e0dcd3")) +
+  ylab("% of total leukocytes") +
+  xlab("treatment") +
+  theme_classic() +
+  theme(legend.position = "none",
+        strip.text.x = element_text(size = 7))
+
+figS1.B
+
+setwd("../figures")
+pdf(file = "Figure_S1B.pdf", width = 14, height = 5)
+print(figS1.B)
+invisible(dev.off())
+
+rm(data_violin, viable_patients) # cleanup
+```

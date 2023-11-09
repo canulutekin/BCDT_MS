@@ -1,0 +1,649 @@
+---
+title: "Figure 2"
+author: "Can Ulutekin"
+date: "05/10/2022"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+### Cleanup
+
+```{r}
+rm(list = ls())
+```
+
+### Packages
+
+```{r}
+library(tidyverse)
+library(openxlsx)
+library(ComplexHeatmap)
+library(ggpubr)
+```
+
+### Load Data
+
+```{r, warning=FALSE}
+setwd("../../paper_data/discovery_cohort/")
+data_cyto <- readRDS("data_disc_cyto.rds")
+data_surf <- readRDS("data_disc_surf.rds")
+md <- read.xlsx("metadata.xlsx")
+
+all_markers <- colnames(data_cyto)[3:38]
+```
+
+### Figure 2.A
+
+```{r, warning=FALSE}
+white.black <- colorRampPalette(c("white", "black"))(n = 9)
+
+CD4_clust_markers <- c("CCR7", "CD103", "CD27", "CD45R0", "CD45RA", "CXCR5")
+
+data_heatmap <- data_cyto %>%
+  dplyr::filter(main_clusters == "CD4") %>%
+  dplyr::group_by(sub_clusters) %>%
+  dplyr::summarise(across(.cols = all_of(CD4_clust_markers), median,
+                          .groups = "drop_last")) %>%
+  dplyr::ungroup() %>%
+  tibble::column_to_rownames("sub_clusters") %>%
+  as.matrix()
+
+fig2.A <- Heatmap(data_heatmap,
+                  col = white.black,
+                  show_column_dend = FALSE,
+                  show_row_dend = FALSE,
+                  cluster_columns = FALSE,
+                  row_order = c("Central Memory", "Effector Memory",
+                                "Naive", "Follicular", "CD103+"),
+                  row_names_gp = gpar(fontsize = 20),
+                  column_names_gp = gpar(fontsize = 16),
+                  name = "Expr")
+
+fig2.A
+
+setwd("../figures")
+pdf(file = "Figure_2A.pdf", width = 10)
+print(fig2.A)
+invisible(dev.off())
+
+rm(white.black, CD4_clust_markers, data_heatmap) # cleanup
+```
+
+### Figure 2.B
+
+```{r, warning=FALSE}
+data_violin <- data_cyto %>%
+  dplyr::filter(main_clusters == "CD4") %>%
+  dplyr::group_by(patient_timepoint) %>%
+  dplyr::add_tally(name = "CD4_count") %>%
+  dplyr::ungroup() %>%
+  dplyr::group_by(patient_timepoint, sub_clusters) %>%
+  dplyr::add_tally(name = "CD4sub_count") %>%
+  dplyr::ungroup() %>%
+  dplyr::select(patient_timepoint, sub_clusters, CD4sub_count,
+                CD4_count) %>% # total_count
+  dplyr::distinct() %>%
+  dplyr::mutate(CD4_comp = 100 * CD4sub_count / CD4_count) %>%
+  dplyr::left_join(md, by = "patient_timepoint") %>%
+  dplyr::mutate(treated = if_else(treatment_cycle == 0,
+                                  "Before", "After",
+                                  NA_character_)) %>%
+  dplyr::mutate(sub_clusters = factor(sub_clusters,
+                                      levels = c("Central Memory",
+                                                 "Effector Memory",
+                                                 "Naive",
+                                                 "Follicular",
+                                                 "CD103+"))) %>%
+  dplyr::mutate(treated = factor(treated, levels = c("Before", "After"))) %>%
+  dplyr::arrange(sub_clusters, patient_id, treated)
+
+fig2.B <- ggplot(data_violin, aes(x = treated, y = CD4_comp, fill = treated)) +
+  
+  ### The values shown by stat_compare_means are not multiple hypothesis corrected
+  ### Use the function p.adjust with Benjamini-Hochberg to replicate p-values from the study
+  # stat_compare_means(comparisons = list(c("Before", "After")), paired = T) +
+  
+  geom_violin(scale ="area", alpha = 1, draw_quantiles = .5) +
+  geom_point(size = 0.5) +
+  geom_line(aes(group = patient_id), colour="black", linetype="11") +
+  facet_wrap(~sub_clusters, scales = "free", nrow = 1) +
+  scale_fill_manual(values = c("#abc3c9", "#e0dcd3")) +
+  ylab("% of CD4+ T cells") +
+  xlab("treatment") +
+  theme_classic() +
+  theme(legend.position = "none",
+        strip.text.x = element_text(size = 7))
+
+fig2.B
+
+setwd("../figures")
+pdf(file = "Figure_2B.pdf", width = 14, height = 5)
+print(fig2.B)
+invisible(dev.off())
+
+rm(data_violin) # cleanup
+```
+
+### Figure 2.C
+
+```{r, warning=FALSE}
+viable_patients <- c("1_0","1_1","2_0","2_2","3_0","3_1","4_0","4_1",
+                     "5_0","5_1","6_0","6_1","7_0","7_1","8_0","8_1",
+                     "9_0","9_1","10_0","10_1","11_0","11_1","12_0","12_1")
+
+data_violin <- data_surf %>%
+  dplyr::filter(patient_timepoint %in% viable_patients) %>%
+  dplyr::filter(main_clusters == "CD4") %>%
+  dplyr::mutate(naive_mem = case_when(
+    sub_clusters %in% c("Central Memory", "Effector Memory") ~ "Memory",
+    sub_clusters %in% c("Naive") ~ "Naive",
+    TRUE ~ NA_character_
+  )) %>%
+  dplyr::filter(!is.na(naive_mem)) %>%
+  dplyr::group_by(patient_timepoint, naive_mem) %>%
+  dplyr::tally(name = "count") %>%
+  dplyr::ungroup() %>%
+  tidyr::pivot_wider(id_cols = "patient_timepoint",
+                     names_from = "naive_mem", values_from = "count") %>%
+  dplyr::mutate(naive_mem_ratio = Naive / Memory) %>%
+  dplyr::left_join(md, by = "patient_timepoint") %>%
+  dplyr::mutate(treated = if_else(treatment_cycle == 0, "Before", "After",
+                                  NA_character_)) %>%
+  dplyr::mutate(treated = factor(treated, levels = c("Before", "After")))
+
+fig2.C <- ggplot(data_violin,
+                 aes(x = treated, y = naive_mem_ratio, fill = treated)) +
+  geom_violin(scale ="area", alpha = 1, draw_quantiles = .5) +
+  geom_point(size = 0.5) +
+  geom_line(aes(group = patient_id), colour="black", linetype="11") +
+  scale_fill_manual(values = c("#abc3c9", "#e0dcd3")) +
+  stat_compare_means(comparisons = list(c("Before", "After")), paired = T) +
+  ylab("naive to memory ratio") +
+  xlab("treatment") +
+  theme_classic() +
+  theme(legend.position = "none",
+        strip.text.x = element_text(size = 7))
+
+fig2.C
+
+setwd("../figures")
+pdf(file = "Figure_2C.pdf", height = 8, width = 4)
+print(fig2.C)
+invisible(dev.off())
+
+rm(data_violin, viable_patients) # cleanup
+```
+
+### Figure 2.D
+
+```{r, warning=FALSE}
+cp <- c("#4545fc", "#FF6666", "#8CC09D", "#F0EF70", "#F0BA64", "#FDCFCA", "#ACDDFF")
+
+activation_markers <- c("CD25","CD27","CD45R0","CD45RA","CD56","CD69","CD7")
+localization_markers <- c("CCR2","CCR4","CCR7","CXCR4","CXCR5","VLA4")
+cytokine_markers <- c("GM.CSF","IFN.g","IL.10","IL.13","IL.17A","IL.2",
+                      "IL.21","IL.22","IL.3","IL.4","IL.6","IL.9","TNF.a")
+
+n_clust <- 5
+
+n_act <- length(activation_markers)
+n_loc <- length(localization_markers)
+n_cyt <- length(cytokine_markers)
+
+custom_wilcox <- function(x, y){
+    result <- wilcox.test(x, y, paired = TRUE)
+    return(result$p.value)
+}
+
+custom_sign <- function(x, y){
+  if(mean(x) > mean(y)) return("Downregulation")
+  else if(mean(x) < mean(y)) return("Upregulation")
+  else return(NA_character_)
+}
+
+data_markers <- data_cyto %>%
+  dplyr::filter(main_clusters == "CD4") %>%
+  dplyr::group_by(patient_timepoint, sub_clusters) %>%
+  dplyr::summarise(across(all_of(all_markers), median),
+                   .groups = "drop_last") %>%
+  dplyr::ungroup() %>%
+  dplyr::left_join(md, by = "patient_timepoint") %>%
+  dplyr::mutate(treated = if_else(
+    treatment_cycle == 0, "Before", "After", NA_character_)) %>%
+  dplyr::mutate(sub_clusters = factor(
+    sub_clusters, levels = c("Central Memory", "Effector Memory",
+                             "Naive", "Follicular", "CD103+"))) %>%
+  tidyr::pivot_longer(cols = all_of(all_markers), names_to = "markers",
+                      values_to = "median_expression") %>%
+  tidyr::pivot_wider(id_cols = c("patient_id", "sub_clusters", "markers"),
+                     names_from = "treated",
+                     values_from = "median_expression") %>%
+  dplyr::group_by(sub_clusters, markers) %>%
+  dplyr::summarise(p_val = custom_wilcox(Before, After),
+                   sign = custom_sign(Before, After),
+                   .groups = "drop_last") %>%
+  dplyr::ungroup() %>%
+  dplyr::mutate(sign = factor(
+    sign, levels = c("Upregulation", "Downregulation"))) %>%
+  dplyr::mutate(marker_type = case_when(
+    markers %in% activation_markers ~ "activation",
+    markers %in% localization_markers ~ "localization",
+    markers %in% cytokine_markers ~ "cytokine",
+    TRUE ~ NA_character_)) %>%
+  dplyr::filter(!is.na(marker_type)) 
+
+gap_act <- n_clust * n_act / 30
+gap_loc <- n_clust * n_loc / 30
+gap_cyt <- n_clust * n_cyt / 30
+
+angle_param_act <- (360 / (n_act * n_clust))
+angle_param_loc <- (360 / (n_loc * n_clust))
+angle_param_cyt <- (360 / (n_cyt * n_clust))
+
+data_activation <- data_markers %>%
+  dplyr::filter(marker_type == "activation") %>%
+  dplyr::mutate(p_adj_val = p.adjust(pull(., p_val), method = "BH")) %>%
+  dplyr::mutate(log_scaled = -log10(p_adj_val)) %>%
+  dplyr::mutate(x_axis = paste(sub_clusters, markers, sep = "_")) %>%
+  dplyr::mutate(x_axis = factor(x_axis, levels = pull(., x_axis))) %>%
+  dplyr::mutate(x_axis = addNA(x_axis)) %>%
+  dplyr::mutate(text = if_else(p_adj_val <= 0.05 | sub_clusters == "Central Memory",
+                               markers, NA_character_, NA_character_)) %>%
+  dplyr::mutate(x_axis_text = 1:length(pull(., x_axis))) %>%
+  dplyr::mutate(x_axis_text = if_else(!is.na(text), x_axis_text,
+                                      NA_integer_, NA_integer_)) %>%
+  dplyr::mutate(angle = (90 + (gap_act/2)) + 0.5 - angle_param_act * ((x_axis_text %% 18))) %>%
+  dplyr::mutate(hjust = if_else(x_axis_text <= n()/2, 0, 1, NA_real_))
+
+data_localization <- data_markers %>%
+  dplyr::filter(marker_type == "localization") %>%
+  dplyr::mutate(p_adj_val = p.adjust(pull(., p_val), method = "BH")) %>%
+  dplyr::mutate(log_scaled = -log10(p_adj_val)) %>%
+  dplyr::mutate(x_axis = paste(sub_clusters, markers, sep = "_")) %>%
+  dplyr::mutate(x_axis = factor(x_axis, levels = pull(., x_axis))) %>%
+  dplyr::mutate(x_axis = addNA(x_axis)) %>%
+  dplyr::mutate(text = if_else(p_adj_val <= 0.05 | sub_clusters == "Central Memory",
+                               markers, NA_character_, NA_character_)) %>%
+  dplyr::mutate(x_axis_text = 1:length(pull(., x_axis))) %>%
+  dplyr::mutate(x_axis_text = if_else(!is.na(text), x_axis_text,
+                                      NA_integer_, NA_integer_)) %>%
+  dplyr::mutate(angle = (90 + (gap_loc/2)) + 0.5 - angle_param_loc * ((x_axis_text %% 18))) %>%
+  dplyr::mutate(hjust = if_else(x_axis_text <= n()/2, 0, 1, NA_real_))
+
+data_cytokine <- data_markers %>%
+  dplyr::filter(marker_type == "cytokine") %>%
+  dplyr::mutate(p_adj_val = p.adjust(pull(., p_val), method = "BH")) %>%
+  dplyr::mutate(log_scaled = -log10(p_adj_val)) %>%
+  dplyr::mutate(x_axis = paste(sub_clusters, markers, sep = "_")) %>%
+  dplyr::mutate(x_axis = factor(x_axis, levels = pull(., x_axis))) %>%
+  dplyr::mutate(x_axis = addNA(x_axis)) %>%
+  dplyr::mutate(text = if_else(p_adj_val <= 0.05 | sub_clusters == "Central Memory",
+                               markers, NA_character_, NA_character_)) %>%
+  dplyr::mutate(x_axis_text = 1:length(pull(., x_axis))) %>%
+  dplyr::mutate(x_axis_text = if_else(!is.na(text), x_axis_text,
+                                      NA_integer_, NA_integer_)) %>%
+  dplyr::mutate(angle = (90 + (gap_cyt/2)) + 0.5 - angle_param_cyt * ((x_axis_text %% 18))) %>%
+  dplyr::mutate(hjust = if_else(x_axis_text <= n()/2, 0, 1, NA_real_))
+
+
+data_activation_lines <- data.frame(
+  x = 0.5 + seq(0, nrow(data_activation),
+                length(unique(data_activation$markers))),
+  xend = 0.5 + seq(0, nrow(data_activation),
+                   length(unique(data_activation$markers))),
+  y = 0, yend = -log10(0.05))
+
+data_localization_lines <- data.frame(
+  x = 0.5 + seq(0, nrow(data_localization),
+                length(unique(data_localization$markers))),
+  xend = 0.5 + seq(0, nrow(data_localization),
+                   length(unique(data_localization$markers))),
+  y = 0, yend = -log10(0.05))
+
+data_cytokine_lines <- data.frame(
+  x = 0.5 + seq(0, nrow(data_cytokine),
+                length(unique(data_cytokine$markers))),
+  xend = 0.5 + seq(0, nrow(data_cytokine),
+                   length(unique(data_cytokine$markers))),
+  y = 0, yend = -log10(0.05))
+
+data_activation_rects <- data.frame(
+  xmin = seq(0.5, (n_act * n_clust) + 0.5 - n_act, n_act), xmax = seq(0.5 + n_act,  (n_act * n_clust) + 0.5, n_act),
+  ymin = -0.4, ymax = 0, cluster = levels(data_activation$sub_clusters)
+)
+
+data_localization_rects <- data.frame(
+  xmin = seq(0.5, (n_loc * n_clust) + 0.5 - n_loc, n_loc), xmax = seq(0.5 + n_loc,  (n_loc * n_clust) + 0.5, n_loc),
+  ymin = -0.4, ymax = 0, cluster = levels(data_localization$sub_clusters)
+)
+
+data_cytokine_rects <- data.frame(
+  xmin = seq(0.5, (n_cyt * n_clust) + 0.5 - n_cyt, n_cyt), xmax = seq(0.5 + n_cyt,  (n_cyt * n_clust) + 0.5, n_cyt),
+  ymin = -0.4, ymax = 0, cluster = levels(data_cytokine$sub_clusters)
+)
+
+fig2.D_act <- ggplot() +
+  geom_point(data = data_activation, ### establish x-axis
+             aes(x = x_axis, y = -log10(0.05)), alpha = 0) +
+  geom_point(data = data.frame(x = c(1 - 0.5 - gap_act/2, 0.5 + gap_act/2 + (n_clust * n_act))), ### establish x-axis gap
+             aes(x = x), y = 0, alpha = 0) +
+  geom_segment(data = data.frame(x = 0.5, xend = 0.5 + (n_clust * n_act), y = -log10(0.05)),
+               aes(y = y, yend = y, x = x, xend = xend), linetype = "dashed") +
+  geom_segment(data = data.frame(y = seq(0.5, 2, 0.5)),
+               aes(y = y, yend = y), x = 0.5, xend =  0.5 + (n_clust * n_act), color = "#cccccc") +
+  geom_text(data = data.frame(y = seq(0.5, 2, 0.5), x = 1 - 0.5 - gap_act/2),
+            aes(y = y, label = y, x = x), size = 3, hjust = 0.5) +
+  geom_segment(data = data_activation,
+               aes(x = x_axis_text, xend = x_axis_text),
+               y = 1.5, yend = 2.1) +
+  geom_col(data = data_activation,
+           aes(x = x_axis, y = log_scaled, fill = sign), col = "black") +
+  geom_segment(data = data_activation_lines,
+               aes(x = x, xend = x, y = y, yend = yend)) +
+  geom_segment(data = data_activation_lines,
+               aes(x = x, xend = xend), y = 0, yend = -0.4) +
+  geom_text(data = data_activation,
+            aes(x = x_axis, y = 2.2, label = text, angle = angle, hjust = hjust), size = 4) +
+  geom_rect(data = data_activation_rects,
+            aes(xmin = xmin, xmax = xmax, ymin = ymin, ymax = ymax, fill = cluster), color = "black") +
+  geom_text(aes(x = 1 - 0.5 - gap_act/2, y = -1.6, label = "Surface Activation"), size = 4, hjust = 0.5) +
+  geom_text(aes(x = 1 - 0.5 - gap_act/2, y = -2, label = "Markers"), size = 4, hjust = 0.5) +
+  geom_text(aes(x = (0.5 + gap_act/2 + n_clust * n_act)/2, y = -1.5, label = "-log10(p-value)"), size = 3.5, hjust = 0.5) +
+  scale_y_continuous(limits = c(-2, 2.6)) +
+  scale_fill_manual(values = cp,
+                    breaks = c("Downregulation", "Upregulation",
+                               "Central Memory", "Effector Memory", "Naive",
+                               "Follicular", "CD103+")) +
+  guides(fill = guide_legend(title = "Cluster.ID")) +
+  coord_polar() +
+  theme_void()
+
+fig2.D_loc <- ggplot() +
+  geom_point(data = data_localization, ### establish x-axis
+             aes(x = x_axis, y = -log10(0.05)), alpha = 0) +
+  geom_point(data = data.frame(x = c(1 - 0.5 - gap_loc/2, 0.5 + gap_loc/2 + (n_clust * n_loc))), ### establish x-axis gap
+             aes(x = x), y = 0, alpha = 0) +
+  geom_segment(data = data.frame(x = 0.5, xend = 0.5 + (n_clust * n_loc), y = -log10(0.05)),
+               aes(y = y, yend = y, x = x, xend = xend), linetype = "dashed") +
+  geom_segment(data = data.frame(y = seq(0.5, 2, 0.5)),
+               aes(y = y, yend = y), x = 0.5, xend =  0.5 + (n_clust * n_loc), color = "#cccccc") +
+  geom_text(data = data.frame(y = seq(0.5, 2, 0.5), x = 1 - 0.5 - gap_loc/2),
+            aes(y = y, label = y, x = x), size = 3, hjust = 0.5) +
+  geom_segment(data = data_localization,
+               aes(x = x_axis_text, xend = x_axis_text),
+               y = 1.5, yend = 2.1) +
+  geom_col(data = data_localization,
+           aes(x = x_axis, y = log_scaled, fill = sign), col = "black") +
+  geom_segment(data = data_localization_lines,
+               aes(x = x, xend = x, y = y, yend = yend)) +
+  geom_segment(data = data_localization_lines,
+               aes(x = x, xend = xend), y = 0, yend = -0.4) +
+  geom_text(data = data_localization,
+            aes(x = x_axis, y = 2.2, label = text, angle = angle, hjust = hjust), size = 4) +
+  geom_rect(data = data_localization_rects,
+            aes(xmin = xmin, xmax = xmax, ymin = ymin, ymax = ymax, fill = cluster), color = "black") +
+  geom_text(aes(x = 1 - 0.5 - gap_loc/2, y = -1.6, label = "Surface Localization"), size = 4, hjust = 0.5) +
+  geom_text(aes(x = 1 - 0.5 - gap_loc/2, y = -2, label = "Markers"), size = 4, hjust = 0.5) +
+  geom_text(aes(x = (0.5 + gap_loc/2 + n_clust * n_loc)/2, y = -1.5, label = "-log10(p-value)"), size = 3.5, hjust = 0.5) +
+  scale_y_continuous(limits = c(-2, 2.6)) +
+  scale_fill_manual(values = cp,
+                    breaks = c("Downregulation", "Upregulation",
+                               "Central Memory", "Effector Memory", "Naive",
+                               "Follicular", "CD103+")) +
+  guides(fill = guide_legend(title = "Cluster.ID")) +
+  coord_polar() +
+  theme_void()
+
+fig2.D_cyt <-  ggplot() +
+  geom_point(data = data_cytokine, ### establish x-axis
+             aes(x = x_axis, y = -log10(0.05)), alpha = 0) +
+  geom_point(data = data.frame(x = c(1 - 0.5 - gap_cyt/2, 0.5 + gap_cyt/2 + (n_clust * n_cyt))), ### establish x-axis gap
+             aes(x = x), y = 0, alpha = 0) +
+  geom_segment(data = data.frame(x = 0.5, xend = 0.5 + (n_clust * n_cyt), y = -log10(0.05)),
+               aes(y = y, yend = y, x = x, xend = xend), linetype = "dashed") +
+  geom_segment(data = data.frame(y = seq(0.5, 2, 0.5)),
+               aes(y = y, yend = y), x = 0.5, xend =  0.5 + (n_clust * n_cyt), color = "#cccccc") +
+  geom_text(data = data.frame(y = seq(0.5, 2, 0.5), x = 1 - 0.5 - gap_cyt/2),
+            aes(y = y, label = y, x = x), size = 3, hjust = 0.5) +
+  geom_segment(data = data_cytokine,
+               aes(x = x_axis_text, xend = x_axis_text),
+               y = 1.5, yend = 2.1) +
+  geom_col(data = data_cytokine,
+           aes(x = x_axis, y = log_scaled, fill = sign), col = "black") +
+  geom_segment(data = data_cytokine_lines,
+               aes(x = x, xend = x, y = y, yend = yend)) +
+  geom_segment(data = data_cytokine_lines,
+               aes(x = x, xend = xend), y = 0, yend = -0.4) +
+  geom_text(data = data_cytokine,
+            aes(x = x_axis, y = 2.2, label = text, angle = angle, hjust = hjust), size = 4) +
+  geom_rect(data = data_cytokine_rects,
+            aes(xmin = xmin, xmax = xmax, ymin = ymin, ymax = ymax, fill = cluster), color = "black") +
+  geom_text(aes(x = 1 - 0.5 - gap_cyt/2, y = -1.6, label = "Cytokines"), size = 4, hjust = 0.5) +
+  geom_text(aes(x = (0.5 + gap_cyt/2 + n_clust * n_cyt)/2, y = -1.5, label = "-log10(p-value)"), size = 3.5, hjust = 0.5) +
+  scale_y_continuous(limits = c(-2, 2.6)) +
+  scale_fill_manual(values = cp,
+                    breaks = c("Downregulation", "Upregulation",
+                               "Central Memory", "Effector Memory", "Naive",
+                               "Follicular", "CD103+")) +
+  guides(fill = guide_legend(title = "Cluster.ID")) +
+  coord_polar() +
+  theme_void()
+
+fig2.D_act
+fig2.D_loc
+fig2.D_cyt
+
+setwd("../figures")
+pdf(file = "Figure_2D.pdf")
+print(fig2.D_act)
+print(fig2.D_loc)
+print(fig2.D_cyt)
+invisible(dev.off())
+
+rm(cp, activation_markers, localization_markers, cytokine_markers,
+   n_act, n_loc, n_cyt, n_clust, custom_wilcox, custom_sign, data_markers,
+   data_activation, data_activation_lines, data_activation_rects,
+   data_localization, data_localization_lines, data_localization_rects,
+   data_cytokine, data_cytokine_lines, data_cytokine_rects, angle_param_act,
+   angle_param_loc, angle_param_cyt, gap_act, gap_loc, gap_cyt) # cleanup
+```
+
+### Figure 2.E
+
+```{r, warning=FALSE}
+data_violin <- data_cyto %>%
+  dplyr::filter(main_clusters == "CD4") %>%
+  dplyr::group_by(patient_timepoint, sub_clusters) %>%
+  dplyr::summarise(across(.cols = all_of(all_markers), .fns = median)) %>%
+  dplyr::ungroup() %>%
+  dplyr::left_join(md, by = "patient_timepoint") %>%
+  dplyr::mutate(treated = if_else(treatment_cycle == 0,
+                                  "Before", "After",
+                                  NA_character_)) %>%
+  dplyr::mutate(sub_clusters = factor(sub_clusters,
+                                      levels = c("Central Memory",
+                                                 "Effector Memory",
+                                                 "Naive",
+                                                 "Follicular",
+                                                 "CD103+"))) %>%
+  dplyr::mutate(treated = factor(treated, levels = c("Before", "After"))) %>%
+  dplyr::arrange(sub_clusters, patient_id, treated)
+
+fig2.E <- ggplot(data_violin, aes(x = treated, y = CD27, fill = treated)) +
+  
+  ### The values shown by stat_compare_means are not multiple hypothesis corrected
+  ### Use the function p.adjust with Benjamini-Hochberg to replicate p-values from the study
+  # stat_compare_means(comparisons = list(c("Before", "After")), paired = T) +
+  geom_violin(scale ="area", alpha = 1, draw_quantiles = .5) +
+  geom_point(size = 0.5) +
+  geom_line(aes(group = patient_id), colour="black", linetype="11") +
+  facet_wrap(~sub_clusters, scales = "free", nrow = 1) +
+  scale_fill_manual(values = c("#abc3c9", "#e0dcd3")) +
+  ylab("median CD27 expression") +
+  xlab("treatment") +
+  theme_classic() +
+  theme(legend.position = "none",
+        strip.text.x = element_text(size = 7))
+
+fig2.E
+
+setwd("../figures")
+pdf(file = "Figure_2E.pdf", width = 14, height = 5)
+print(fig2.E)
+invisible(dev.off())
+
+rm(data_violin) # cleanup
+```
+
+### Figure 2.F
+
+```{r, warning=FALSE}
+data_violin <- data_cyto %>%
+  dplyr::filter(main_clusters == "CD4") %>%
+  dplyr::group_by(patient_timepoint) %>%
+  dplyr::summarise(across(.cols = all_of(all_markers), .fns = median)) %>%
+  dplyr::ungroup() %>%
+  dplyr::left_join(md, by = "patient_timepoint") %>%
+  dplyr::mutate(treated = if_else(treatment_cycle == 0,
+                                  "Before", "After",
+                                  NA_character_)) %>%
+  dplyr::mutate(treated = factor(treated, levels = c("Before", "After"))) %>%
+  dplyr::arrange(patient_id, treated)
+
+fig2.F <- ggplot(data_violin, aes(x = treated, y = CD27, fill = treated)) +
+  stat_compare_means(comparisons = list(c("Before", "After")), paired = T) +
+  geom_violin(scale ="area", alpha = 1, draw_quantiles = .5) +
+  geom_point(size = 0.5) +
+  geom_line(aes(group = patient_id), colour="black", linetype="11") +
+  scale_fill_manual(values = c("#abc3c9", "#e0dcd3")) +
+  ylab("median CD27 expression") +
+  xlab("treatment") +
+  theme_classic() +
+  theme(legend.position = "none",
+        strip.text.x = element_text(size = 7))
+
+fig2.F
+
+setwd("../figures")
+pdf(file = "Figure_2F.pdf", width = 5, height = 8)
+print(fig2.F)
+invisible(dev.off())
+
+rm(data_violin) # cleanup
+```
+
+### Figure 2.G
+
+```{r, warning=FALSE}
+data_graph <- data_cyto %>%
+  dplyr::filter(main_clusters == "CD4") %>%
+  dplyr::filter(sub_clusters != "CD103+") %>%
+  dplyr::group_by(patient_timepoint, sub_clusters) %>%
+  dplyr::summarise(CD27 = median(CD27), .groups = "drop_last") %>%
+  dplyr::ungroup() %>%
+  dplyr::left_join(md, by = "patient_timepoint") %>%
+  dplyr::mutate(treated = if_else(treatment_cycle == 0,
+                                  "Before", "After",
+                                  NA_character_)) %>%
+  dplyr::mutate(sub_clusters = factor(sub_clusters,
+                                      levels = c("Naive",
+                                                 "Follicular",
+                                                 "Central Memory",
+                                                 "Effector Memory"))) %>%
+  dplyr::mutate(treated = factor(treated, levels = c("Before", "After"))) %>%
+  dplyr::mutate(x_axis = case_when(
+    sub_clusters == "Naive" ~ 1,
+    sub_clusters == "Follicular" ~ 2,
+    sub_clusters == "Central Memory" ~ 3,
+    sub_clusters == "Effector Memory" ~ 4,
+    TRUE ~ NA_real_)) %>%
+  dplyr::mutate(x_axis_shift = if_else(treated == "After", x_axis + 0.1,
+                                       x_axis - 0.1, NA_real_))
+
+fig2.G <- ggplot(data_graph,
+                 aes(x = x_axis, y = CD27, col= treated)) +
+  geom_smooth(method = "loess", formula = "y ~ x", se = FALSE, size = 1) +
+  scale_x_continuous(breaks = seq(1, 4, 1),
+                     labels = c("Naive", "Follicular",
+                                "Central Memory", "Effector Memory")) +
+  scale_color_manual(values = c("#abc3c9", "#e0dcd3")) +
+  ylab("median CD27 expression") +
+  xlab("CD4+ T cell subsets") +
+  guides(col = guide_legend(title = "Treatment")) +
+  theme_classic() +
+  theme(panel.grid.major = element_line())
+
+fig2.G
+
+setwd("../figures")
+pdf(file = "Figure_2G.pdf", width = 12, height = 5)
+print(fig2.G)
+invisible(dev.off())
+
+rm(data_graph) # cleanup
+```
+
+### Figure 2.H
+
+```{r, warning=FALSE}
+data_graph <- data_cyto %>%
+  dplyr::filter(main_clusters == "CD4") %>%
+  dplyr::filter(sub_clusters != "CD103+") %>%
+  dplyr::group_by(patient_timepoint, sub_clusters) %>%
+  dplyr::summarise(CD27 = median(CD27), .groups = "drop_last") %>%
+  dplyr::ungroup() %>%
+  dplyr::left_join(md, by = "patient_timepoint") %>%
+  dplyr::mutate(treated = if_else(treatment_cycle == 0,
+                                  "Before", "After",
+                                  NA_character_)) %>%
+  dplyr::mutate(sub_clusters = factor(sub_clusters,
+                                      levels = c("Naive",
+                                                 "Follicular",
+                                                 "Central Memory",
+                                                 "Effector Memory")))
+
+data_graph_temp <- data_graph %>%
+  dplyr::filter(treated == "Before") %>%
+  dplyr::select(patient_id, sub_clusters, CD27) %>%
+  dplyr::rename(CD27_ = CD27)
+
+data_graph <- data_graph %>%
+  dplyr::mutate(CD27 = if_else(treated == "After", CD27, -CD27, NA_real_)) %>%
+  dplyr::group_by(patient_id, sub_clusters) %>%
+  dplyr::summarise(delta_CD27 = sum(CD27), .groups = "drop_last") %>%
+  dplyr::ungroup() %>%
+  dplyr::full_join(data_graph_temp, by = c("patient_id", "sub_clusters")) %>%
+  dplyr::mutate(delta_CD27 = 100 * delta_CD27 / CD27_) %>%
+  dplyr::mutate(x_axis = case_when(
+    sub_clusters == "Naive" ~ 1,
+    sub_clusters == "Follicular" ~ 2,
+    sub_clusters == "Central Memory" ~ 3,
+    sub_clusters == "Effector Memory" ~ 4,
+    TRUE ~ NA_real_
+  ))
+
+fig2.H <- ggplot(data_graph,
+                 aes(x = x_axis, y = delta_CD27)) +
+  geom_hline(yintercept = 0, linetype = "dotted") +
+  geom_smooth(method = "loess", formula = "y~x", size = 0.5, col = "#606266") +
+  scale_x_continuous(breaks = seq(1, 4, 1),
+                     labels = c("Naive", "Follicular",
+                                "Central Memory", "Effector Memory")) +
+  scale_y_continuous(breaks = seq(0, 14, 2)) +
+  theme_classic() +
+  theme(panel.grid.major = element_line()) +
+  ylab("% shift in CD27 expression") +
+  xlab("CD4+ T cell subsets")
+
+fig2.H
+
+setwd("../figures")
+pdf(file = "Figure_2H.pdf", width = 12, height = 5)
+print(fig2.H)
+invisible(dev.off())
+
+rm(data_graph, data_graph_temp) # cleanup
+```

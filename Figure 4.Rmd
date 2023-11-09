@@ -1,0 +1,120 @@
+---
+title: "scRNAseq Analysis"
+author: "Can Ulutekin"
+date: "2023-10-05"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+### Cleanup
+
+```{r}
+rm(list = ls())
+```
+
+### Packages
+
+```{r}
+library(tidyverse)
+library(Seurat)
+library(SeuratData)
+library(SeuratDisk)
+```
+
+### Load Data
+
+Please download the MS_CSF.h5ad from Schafflick et. al. before running this script.
+
+```{r, warning=FALSE}
+Convert(source = "MS_CSF.h5ad", dest = "h5seurat", overwrite = TRUE)
+seuratObj <- LoadH5Seurat("MS_CSF.h5seurat")
+```
+
+### Reformat Data
+
+Meta Data info:
+- MS -> Stores binary information of MS or not
+- CSF -> Stores binary information of CSF or not
+- valid_clusters -> Stores binary information relating cluster validity
+
+p.s. All binary information is stored numerically as 1 or 2, where 2 denotes TRUE and 1 denotes FALSE. So cells where MS is 2 comes from MS samples and cells where MS is 1 comes from control samples. The same holds true for the other binary variables CSF and valid_clusters.
+
+```{r, warning=FALSE}
+### Re-label 2's as TRUE and 1's as FALSE
+seuratObj$MS <- seuratObj$MS == 2
+seuratObj$CSF <- seuratObj$CSF == 2
+seuratObj$valid_clusters <- seuratObj$valid_clusters == 2
+
+### Remove non-valid clusters as specified by Schafflick et. al.
+seuratObj <- subset(x = seuratObj, subset = valid_clusters)
+
+### Create SeuratObject's exclusively focusing on MS, CSF or both
+seuratObj_MS <- subset(x = seuratObj, subset = MS)
+seuratObj_CSF <- subset(x = seuratObj, subset = CSF)
+seuratObj_MS_CSF <- subset(x = seuratObj_MS, subset = CSF)
+
+### Remove megakaryocytes and blood monocytes in CSF data due to their lack of relevance
+seuratObj_CSF <- subset(x = seuratObj_CSF, labels %in% c("MegaK", "Mono") == FALSE)
+seuratObj_MS_CSF <- subset(x = seuratObj_MS_CSF, labels %in% c("MegaK", "Mono") == FALSE)
+```
+
+### Figure 4.A
+
+```{r, warning=FALSE}
+cp_umap <- c("#AFD3BA", "#3F7450", "#f0ba64", "#24a5fc", "#1338be", "#890188", "#da16ff", "#f3b7ff", "#fccfca", "#f0ef70", "#80471c", "#977254", "#e70127", "#3c280d", "#3ded97")
+
+fig4.A <- DimPlot(seuratObj_MS_CSF, reduction = "umap", group.by = "labels", pt.size = 0.5) +
+  coord_fixed() +
+  # scale_color_manual(values = alpha(cp_umap, 0.3)) +
+  # scale_color_manual(values = alpha(cp_umap, 0.4)) +
+  scale_color_manual(values = cp_umap) +
+  theme_classic()
+
+fig4.A
+
+setwd("../figures")
+pdf(file = "Figure_4A.pdf")
+print(fig4.A)
+invisible(dev.off())
+
+rm(cp_umap) # cleanup
+```
+
+### Figure 4.B
+
+```{r, warning=FALSE}
+markers <- c("CD3E", "TRAC", "IL7R", "CD8B", "CCR7", "FOXP3", "TRDC", "GNLY",
+             "FCGR3A", "SELL", "CD79A", "IGHD", "CD27", "CD38", "LYZ", "WDFY4",
+             "FCER1A", "S100A8", "CD14", "TCF4")
+
+fig4.B <- DotPlot(seuratObj_MS_CSF, features = markers, dot.scale = 12,
+        scale = TRUE, group.by = "labels") +
+  scale_color_gradientn(colours = viridis::viridis(10))
+
+fig4.B
+
+setwd("../figures")
+pdf(file = "Figure_4B.pdf", width = 11, height = 6)
+print(fig4.B)
+invisible(dev.off())
+
+rm(markers) # cleanup
+```
+
+### Figure 4.C
+
+```{r}
+fig4.C <- DotPlot(seuratObj_MS_CSF, features = c("CD70"), dot.scale = 12,
+        scale = TRUE, group.by = "labels") +
+  scale_color_gradientn(colours = viridis::viridis(10))
+
+fig4.C
+
+setwd("../figures")
+pdf(file = "Figure_4C.pdf", width = 4, height = 6)
+print(fig4.C)
+invisible(dev.off())
+```

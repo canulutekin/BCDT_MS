@@ -1,0 +1,118 @@
+---
+title: "Figure S3"
+author: "Can Ulutekin"
+date: "2023-10-10"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+### Cleanup
+
+```{r}
+rm(list = ls())
+```
+
+### Packages
+
+```{r}
+library(tidyverse)
+library(openxlsx)
+library(ggpubr)
+```
+
+### Load Data
+
+```{r, warning=FALSE}
+setwd("../../paper_data/discovery_cohort/")
+data_cyto <- readRDS("data_disc_cyto.rds")
+md <- read.xlsx("metadata.xlsx")
+
+all_markers <- colnames(data_cyto)[3:38]
+```
+
+### Figure S3.A
+
+```{r}
+cp <- c("#8CC09D", "#F0EF70", "#F0BA64", "#FDCFCA", "#ACDDFF")
+
+set.seed(123)
+data_CD4 <- data_cyto %>%
+  dplyr::filter(main_clusters == "CD4") %>%
+  dplyr::mutate(sub_clusters = factor(
+    sub_clusters, levels = c("Central Memory", "Effector Memory",
+                             "Naive", "Follicular", "CD103+"))) %>%
+  dplyr::group_by(sub_clusters) %>%
+  dplyr::sample_n(10000) %>%
+  dplyr::ungroup()
+
+markers <- c("CD45RA", "CD45R0", "CCR7", "CXCR5", "CD103", "CD27")
+
+pdf(file = "../figures/Figure_S3A.pdf")
+for (marker1 in markers) {
+  for (marker2 in markers) {
+    if(marker1 != marker2){
+      if(marker1 == "CD45R0"){
+        p <- ggplot(data_CD4, aes(x = get(marker1), y = get(marker2), color = sub_clusters)) +
+          geom_density2d(binwidth = 1, size = 0.5) +
+          coord_fixed() +
+          xlim(-0.1, 1) +
+          ylim(-0.1, 1) +
+          theme_bw() +
+          xlab(marker1) +
+          ylab(marker2) +
+          scale_color_manual(values = cp)
+        
+        print(p)
+      }
+    }
+  }
+}
+invisible(dev.off())
+
+rm(cp, data_CD4, markers, p, marker1, marker2) # cleanup
+```
+
+### Figure S3.B
+
+```{r}
+cp <- c("#8CC09D", "#F0EF70", "#F0BA64", "#FDCFCA", "#ACDDFF", "#8C9093")
+
+set.seed(123)
+data_CD8 <- data_cyto %>%
+  dplyr::filter(main_clusters == "CD8") %>%
+  dplyr::mutate(sub_clusters = factor(
+    sub_clusters, levels = c("Central Memory", "Effector Memory",
+                             "Naive", "Effector", "CD103+", "NKT"))) %>%
+  dplyr::group_by(sub_clusters) %>%
+  dplyr::sample_n(10000) %>%
+  dplyr::ungroup()
+
+markers <- c("CD45RA", "CD45R0", "CCR7", "CD56", "CD103", "CD27")
+
+pdf(file = "../figures/Figure_S3B.pdf")
+for (marker1 in markers) {
+  for (marker2 in markers) {
+    if(marker1 != marker2){
+      if(marker1 == "CD45R0"){
+        p <- ggplot(data_CD8, aes(x = get(marker1), y = get(marker2), color = sub_clusters)) +
+          geom_density2d(binwidth = 1, size = 0.5) +
+          coord_fixed() +
+          xlim(-0.1, 1) +
+          ylim(-0.1, 1) +
+          theme_bw() +
+          xlab(marker1) +
+          ylab(marker2) +
+          scale_color_manual(values = cp)
+        
+        print(p)
+      }
+    }
+  }
+}
+invisible(dev.off())
+
+rm(cp, data_CD8, markers, p, marker1, marker2) # cleanup
+```
